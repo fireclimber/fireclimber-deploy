@@ -1,0 +1,425 @@
+{
+	"AWSTemplateFormatVersion" : "2010-09-09",
+		"Description": "Fire-Climber. Because Some places suck.",
+		"Parameters": {
+			"VPCName": {
+				"Type": "String",
+				"Default": "fire-climber-network",
+				"Description": "Name of the new fire-climber network (required. safe default)"
+			},
+
+			"InstanceAmiId": {
+				"Type": "String",
+				"Default": "ami-df227bbc",
+				"Description": "Identifier for the server hard-drive template (required. safe default)"
+			},
+
+			"InstanceSize": {
+				"Type": "String",
+				"Default": "t2.micro",
+				"Description": "Size/power of the server (required. safe default)"
+			},
+
+			"InternalIpBase": {
+				"Type": "String",
+				"Default": "10.0.0.0/24",
+				"Description": "Address range for the new fire-climber network (required. safe default)"
+			},
+
+			"AZAIndex": {
+				"Type": "String",
+				"Default": "0",
+				"Description": "Placement for network portion 'A' (required. safe default)"
+			},
+
+			"AZBIndex": {
+				"Type": "String",
+				"Default": "1",
+				"Description": "Placement for network portion 'B' (required. safe default)"
+			},
+
+			"SubnetPublicACIDR": {
+				"Type": "String",
+				"Default": "10.0.0.0/28",
+				"Description": "Address range for network portion 'A' (required. safe default)"
+			},
+
+			"SubnetPublicBCIDR": {
+				"Type": "String",
+				"Default": "10.0.0.128/28",
+				"Description": "Address range for network portion 'B' (required. safe default)"
+			},
+
+			"KeyName": {
+				"Type": "String",
+				"Default": "",
+				"Description": "AWS EC2 ssh-keypair name to use (optional)"
+			},
+
+			"Credentials": {
+				"Type": "String",
+				"Default": "username1:password1;username2:password2",
+				"Description": "Usernames and passwords for the VPN (required. should be changed)"
+			}
+		},
+
+		"Resources" : {
+			"VPC" : {
+				"Type" : "AWS::EC2::VPC",
+				"Properties" : {
+					"CidrBlock" : {"Ref":"InternalIpBase"},
+					"EnableDnsSupport" : "true",
+					"EnableDnsHostnames" : "true",
+					"Tags": [
+						{"Key":"Name", "Value": {"Ref":"VPCName"}}
+					]
+				}
+			},
+
+			"InternetGateway" : {
+				"Type" : "AWS::EC2::InternetGateway",
+				"Properties" : {
+					"Tags" : [
+						{"Key" : "Name", "Value" : {"Fn::Join": ["", [{"Ref":"VPCName"}, "/vpc_internet_gateway"]]}}
+					]
+				}
+			},
+
+			"InternetGatewayAttachment": {
+				"Type" : "AWS::EC2::VPCGatewayAttachment",
+				"Properties" : {
+					"InternetGatewayId" : {"Ref":"InternetGateway"},
+					"VpcId" : {"Ref":"VPC"}
+				}
+			},
+
+			"EIP": {
+				"Type" : "AWS::EC2::EIP",
+				"Properties" : {
+					"Domain" : "vpc"
+				}
+			},
+
+			"InstanceGroup": {
+				"Type": "AWS::AutoScaling::AutoScalingGroup",
+				"Properties": {
+					"AvailabilityZones": [ { "Fn::Select": [ {"Ref":"AZAIndex"}, { "Fn::GetAZs": { "Ref": "AWS::Region" } } ] }, { "Fn::Select": [ {"Ref":"AZBIndex"}, { "Fn::GetAZs": { "Ref": "AWS::Region" } } ] } ],
+					"VPCZoneIdentifier": [{"Ref":"SubnetPublicA"}, {"Ref":"SubnetPublicB"}],
+					"MaxSize": "1",
+					"MinSize": "0",
+					"DesiredCapacity": "1",
+					"HealthCheckGracePeriod": "300",
+					"HealthCheckType": "EC2",
+					"LaunchConfigurationName": { "Ref": "LaunchConfig" },
+					"Tags": [ {
+						"Key": "Name",
+						"Value": { "Fn::Join": [ "", [
+							{ "Ref": "VPCName" },
+							"/vpn-server"
+					] ] },
+					"PropagateAtLaunch": "true"
+					} ]
+				},
+				"CreationPolicy": {
+					"ResourceSignal": {
+						"Timeout": "PT15M",
+						"Count": "1"
+					}
+				},
+				"UpdatePolicy": {
+					"AutoScalingRollingUpdate": {
+						"PauseTime": "PT15M",
+						"WaitOnResourceSignals": "True"
+					}
+				}
+
+			},
+
+			"SecurityGroup": {
+				"Type": "AWS::EC2::SecurityGroup",
+				"DependsOn": [],
+				"Properties": {
+					"VpcId": {"Ref":"VPC"},
+					"GroupDescription": "Allow Stuff in",
+					"SecurityGroupIngress": [
+						{ "IpProtocol": "tcp", "FromPort": "22", "ToPort": "22", "CidrIp": "0.0.0.0/0" },
+						{ "IpProtocol": "tcp", "FromPort": "443", "ToPort": "443", "CidrIp": "0.0.0.0/0" }
+					]
+				}
+			},
+
+			"Role": {
+				"Type": "AWS::IAM::Role",
+				"Properties": {
+					"Path": "/application/",
+					"AssumeRolePolicyDocument": {
+						"Statement": [ {
+							"Effect": "Allow",
+							"Principal": {
+								"Service": [ "ec2.amazonaws.com" ]
+							},
+							"Action": [ "sts:AssumeRole" ]
+						} ]
+					},
+					"Policies": [ {
+						"PolicyName": "RolePolicy",
+						"PolicyDocument": {
+							"Statement": [
+								{
+									"Effect": "Allow",
+									"Action": [
+										"ec2:AssociateAddress",
+										"ecs:DisassociateAddress"
+									],
+									"Resource": "*"
+								}
+							] }
+					} ]
+				}
+			},
+
+			"Profile": {
+				"Type": "AWS::IAM::InstanceProfile",
+				"Properties": {
+					"Path": "/application/",
+					"Roles": [ { "Ref": "Role" } ]
+				}
+			},
+
+			"LaunchConfig": {
+				"Type": "AWS::AutoScaling::LaunchConfiguration",
+				"Properties": {
+					"KeyName": {"Ref":"KeyName"},
+					"AssociatePublicIpAddress": true,
+					"ImageId": {"Ref":"InstanceAmiId"},
+					"InstanceType": { "Ref" : "InstanceSize" },
+					"IamInstanceProfile": {"Ref":"Profile"},
+					"SecurityGroups": [ { "Ref": "SecurityGroup" } ],
+					"UserData": { "Fn::Base64": { "Fn::Join": [ "", [
+						"#!/bin/bash\n",
+						"#########################################\n",
+						"## CloudFormation Instances Bootstrap --\n",
+						"#########################################\n",
+
+						"# Helper function\n",
+						"function error_exit\n",
+						"{\n",
+							"/usr/local/bin/cfn-signal -e 1 --reason \"$1\" ",
+							" --stack ", { "Ref": "AWS::StackName" },
+							" --resource InstanceGroup",
+							" --region ", { "Ref" : "AWS::Region" }, "\n",
+							"  exit 1\n",
+							"}\n",
+
+							"# We need CFN signal. It's not on Ubuntu by default\n",
+							"apt-get -y install python-setuptools\n",
+							"easy_install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz\n",
+
+							"# Now do something\n",
+							"export REGION=\"$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)\"\n",
+							"export AZ=\"${REGION: -1}\"\n",
+							"export ELASTIC_IP=\"", {"Ref":"EIP"}, "\"\n",
+							"export INSTANCE_ID=\"$(curl -s http://169.254.169.254/latest/meta-data/instance-id)\"\n",
+
+							"aws --region ap-southeast-2 ec2 associate-address --public-ip $ELASTIC_IP --instance-id $INSTANCE_ID\n",
+
+							"docker run --name ocserv -p 443:443 -d --privileged tommylau/ocserv\n",
+
+							"export USERS_STRING=\"", {"Ref":"Credentials"}, "\"\n",
+							"export USERS=(${USERS_STRING//;/ })\"\n",
+							"for index in \"${!USERS[@]}\"; do\n",
+							"  userpass=\"${USERS[index]}\"\n",
+							"  creds=(${userpass//:/ })\n",
+							"  echo \"user: ${creds[0]}, pass: ${creds[1]}\"\n",                                   
+							"  echo \"${creds[1]}\" | docker exec -i ocserv ocpasswd -c /etc/ocserv/ocpasswd ${creds[0]}\n",
+							"done\n",
+
+							"/usr/local/bin/cfn-signal -e 0 --reason 'Stack Complete.' ",
+							" --stack ", { "Ref": "AWS::StackName" },
+							" --resource InstanceGroup",
+							" --region ", { "Ref" : "AWS::Region" }, "\n"
+					]
+					] }
+					}
+				}
+			},
+
+			"RouteTableIGW": {
+				"Type" : "AWS::EC2::RouteTable",
+				"Properties" : {
+					"VpcId" : {"Ref":"VPC"},
+					"Tags" : [ {"Key":"Name", "Value":{"Fn::Join":["", [{"Ref":"VPCName"}, "/igw_route_table"]]}}]
+				}
+			},
+
+			"RoutePublicxIGW": {
+				"Type" : "AWS::EC2::Route",
+				"Properties" : {
+					"DestinationCidrBlock" : "0.0.0.0/0",
+					"GatewayId" : {"Ref":"InternetGateway"},
+					"RouteTableId" : {"Ref":"RouteTableIGW"}
+				}
+			},
+
+			"RouteTableAssociationPublicA": {
+				"Type" : "AWS::EC2::SubnetRouteTableAssociation",
+				"Properties" : {
+					"RouteTableId" : {"Ref":"RouteTableIGW"},
+					"SubnetId" : {"Ref":"SubnetPublicA"}
+				}
+			},
+			"RouteTableAssociationPublicB": {
+				"Type" : "AWS::EC2::SubnetRouteTableAssociation",
+				"Properties" : {
+					"RouteTableId" : {"Ref":"RouteTableIGW"},
+					"SubnetId" : {"Ref":"SubnetPublicB"}
+				}
+			},
+
+			"SubnetPublicA": {
+				"Type" : "AWS::EC2::Subnet",
+				"DependsOn": "SubnetPublicACL",
+				"Properties" : {
+					"AvailabilityZone" : { "Fn::Select": [ {"Ref":"AZAIndex"}, { "Fn::GetAZs": { "Ref": "AWS::Region" } } ] },
+					"CidrBlock" : {"Ref":"SubnetPublicACIDR"},
+					"Tags" : [
+						{"Key":"Name", "Value":{"Fn::Join":["", [{"Ref":"VPCName"}, "/public_subnet_a"]]}},
+						{"Key":"SubnetType", "Value": "Public"}
+					],
+						"VpcId": {"Ref":"VPC"}
+				}
+			},
+			"SubnetPublicB": {
+				"Type" : "AWS::EC2::Subnet",
+				"DependsOn": "SubnetPublicACL",
+				"Properties" : {
+					"AvailabilityZone" : { "Fn::Select": [ {"Ref":"AZBIndex"}, { "Fn::GetAZs": { "Ref": "AWS::Region" } } ] },
+					"CidrBlock" : {"Ref":"SubnetPublicBCIDR"},
+					"Tags" : [
+						{"Key":"Name", "Value":{"Fn::Join":["", [{"Ref":"VPCName"}, "/public_subnet_b"]]}},
+						{"Key":"SubnetType", "Value": "Public"}
+					],
+						"VpcId": {"Ref":"VPC"}
+				}
+			},
+
+
+			"SubnetPublicACL": {
+				"Type" : "AWS::EC2::NetworkAcl",
+				"Properties" : {
+					"Tags" : [ {"Key":"Name", "Value":{"Fn::Join":["", [{"Ref":"VPCName"}, "/public_acl"]]}} ],
+					"VpcId" : {"Ref":"VPC"}
+				}
+			},
+			"ACLEntryPublicEverythingFromPublic": {
+				"Type" : "AWS::EC2::NetworkAclEntry",
+				"Properties" : {
+					"NetworkAclId" : {"Ref":"SubnetPublicACL"},
+					"CidrBlock" : {"Ref":"InternalIpBase"},
+					"Egress" : false,
+					"Icmp": {"Code":"-1", "Type":"-1"},
+					"PortRange" : {"From":"1", "To":"65535"},
+					"Protocol" : "-1",
+					"RuleAction" : "allow",
+					"RuleNumber" : "101"
+				}
+			},
+			"ACLEntryPublicEverythingToEverywhere": {
+				"Type" : "AWS::EC2::NetworkAclEntry",
+				"Properties" : {
+					"NetworkAclId" : {"Ref":"SubnetPublicACL"},
+					"CidrBlock" : "0.0.0.0/0",
+					"Egress" : true,
+					"Icmp": {"Code":"-1", "Type":"-1"},
+					"PortRange" : {"From":"1", "To":"65535"},
+					"Protocol" : "-1",
+					"RuleAction" : "allow",
+					"RuleNumber" : "102"
+				}
+			},
+			"ACLEntryPublicAllowEphemeralTCPInFromEverywhere": {
+				"Type" : "AWS::EC2::NetworkAclEntry",
+				"Properties" : {
+					"NetworkAclId" : {"Ref":"SubnetPublicACL"},
+					"CidrBlock" : "0.0.0.0/0",
+					"Egress" : false,
+					"PortRange" : {"From":"32768", "To":"65535"},
+					"Protocol" : "6",
+					"RuleAction" : "allow",
+					"RuleNumber" : "203"
+				}
+			},
+			"ACLEntryPublicAllowEphemeralUDPInFromEverywhere": {
+				"Type" : "AWS::EC2::NetworkAclEntry",
+				"Properties" : {
+					"NetworkAclId" : {"Ref":"SubnetPublicACL"},
+					"CidrBlock" : "0.0.0.0/0",
+					"Egress" : false,
+					"PortRange" : {"From":"32768", "To":"65535"},
+					"Protocol" : "17",
+					"RuleAction" : "allow",
+					"RuleNumber" : "205"
+				}
+			},
+			"ACLEntryPublicAllowICMPFromEverywhere": {
+				"Type" : "AWS::EC2::NetworkAclEntry",
+				"Properties" : {
+					"NetworkAclId" : {"Ref":"SubnetPublicACL"},
+					"CidrBlock" : "0.0.0.0/0",
+					"Egress" : false,
+					"Icmp": {"Code":"-1", "Type":"-1"},
+					"Protocol" : "1",
+					"RuleAction" : "allow",
+					"RuleNumber" : "207"
+				}
+			},
+			"ACLEntryPublicAllowSSHFromEverywhere": {
+				"Type" : "AWS::EC2::NetworkAclEntry",
+				"Properties" : {
+					"NetworkAclId" : {"Ref":"SubnetPublicACL"},
+					"CidrBlock" : "0.0.0.0/0",
+					"Egress" : false,
+					"PortRange" : {"From":"22", "To":"22"},
+					"Protocol" : "6",
+					"RuleAction" : "allow",
+					"RuleNumber" : "1001"
+				}
+			},
+			"ACLEntryPublicAllowHTTPSFromEverywhere": {
+				"Type" : "AWS::EC2::NetworkAclEntry",
+				"Properties" : {
+					"NetworkAclId" : {"Ref":"SubnetPublicACL"},
+					"CidrBlock" : "0.0.0.0/0",
+					"Egress" : false,
+					"PortRange" : {"From":"443", "To":"443"},
+					"Protocol" : "6",
+					"RuleAction" : "allow",
+					"RuleNumber" : "1003"
+				}
+			},
+
+			"SubnetPublicAACLAssociation": {
+				"Type" : "AWS::EC2::SubnetNetworkAclAssociation",
+				"Properties" : {
+					"SubnetId" : {"Ref":"SubnetPublicA"},
+					"NetworkAclId" : {"Ref":"SubnetPublicACL"}
+				}
+			},
+			"SubnetPublicBACLAssociation": {
+				"Type" : "AWS::EC2::SubnetNetworkAclAssociation",
+				"Properties" : {
+					"SubnetId" : {"Ref":"SubnetPublicB"},
+					"NetworkAclId" : {"Ref":"SubnetPublicACL"}
+				}
+			}
+		},
+
+		"Outputs": {
+			"az1": {
+				"Value": {"Fn::Select":[ {"Ref":"AZAIndex"},{ "Fn::GetAZs": {"Ref":"AWS::Region"} }]}
+			},
+			"az2": {
+				"Value": {"Fn::Select":[ {"Ref":"AZBIndex"},{ "Fn::GetAZs": {"Ref":"AWS::Region"} }]}
+			}
+		}
+}
