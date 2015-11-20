@@ -212,7 +212,7 @@
 							"}\n",
 
 							"yum install -y docker\n",
-							"sudo service docker start\n",
+							"service docker start\n",
 
 							"# Now do something\n",
 							"export REGION=\"$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)\"\n",
