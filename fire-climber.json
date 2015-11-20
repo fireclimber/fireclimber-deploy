@@ -122,13 +122,13 @@
 				},
 				"CreationPolicy": {
 					"ResourceSignal": {
-						"Timeout": "PT15M",
+						"Timeout": "PT20M",
 						"Count": "1"
 					}
 				},
 				"UpdatePolicy": {
 					"AutoScalingRollingUpdate": {
-						"PauseTime": "PT15M",
+						"PauseTime": "PT20M",
 						"WaitOnResourceSignals": "True"
 					}
 				}
@@ -225,6 +225,8 @@
 							"yum install -y docker\n",
 							"service docker start\n",
 
+							"docker run --name ocserv -p 1443:443 -d --privileged tommylau/ocserv\n",
+
                                                         "docker pull nginx\n",
 
                                                         "cat <<EOT > /tmp/nginx.non-ssl.default.conf\n",
@@ -290,8 +292,6 @@
                                                         " -v /tmp/dhparams.pem:/etc/ssl/private/dhparams.pem ",
                                                         " -p 443:443 -p 80:80 ",
                                                         " -d nginx\n",
-
-							"docker run --name ocserv -p 1443:443 -d --privileged tommylau/ocserv\n",
 
 							"export USERS_STRING=\"", {"Ref":"Credentials"}, "\"\n",
 							"export USERS=(${USERS_STRING//;/ })\n",
