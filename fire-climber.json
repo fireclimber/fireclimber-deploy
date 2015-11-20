@@ -279,7 +279,7 @@
                                                         "bit-bucket@test.smtp.org\n",
                                                         "EOT\n",
                                                         "openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 -keyout /tmp/nginx.key -out /tmp/nginx.crt < /tmp/openssl-keygen-input.txt\n",
-                                                        "ssl_dhparam /tmp/dhparams.pem\n",
+                                                        "openssl dhparam -out /tmp/dhparams.pem 4096\n",
                                                         "cat /tmp/nginx.non-ssl.default.conf /tmp/nginx.ssl.default.conf > /tmp/nginx.combined.default.conf\n",
 
                                                         "docker run ",
